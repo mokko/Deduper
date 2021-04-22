@@ -1,0 +1,2 @@
+# Deduper
+Simple file deduplication
