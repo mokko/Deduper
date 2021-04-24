@@ -85,12 +85,13 @@ class Deduper2:
                 md5 TEXT);""")
     
     def mk_missing_md5s(self, size):
+        """
+        Sor files of a given size that have no md5, create them. 
+        """
         cursor = self.con.execute(
             "SELECT path FROM Files WHERE size = ? AND md5 IS NULL", size
         )
         
-        #currently we update md5 even if md5 exists already
-        #TODO: only update if mtime has changed
         for file in cursor.fetchall():
             md5 = self.hash_file(file[0])
             #print(f"!!!{file[0]}:{md5}")
@@ -133,13 +134,6 @@ class Deduper2:
             if file.stat().st_size > 0 and not file.is_dir():
                 self.upsert2(file)
 
-    #not currently used
-    def read_db (self):
-        cursor = self.con.cursor()
-        print("read_db")
-        rows = cursor.execute("SELECT path, size, mtime, md5 FROM Files").fetchall()
-        print(rows)
-
     def update_existing_md5s(self, size):
         """
         Check if files have changed since last run and update
@@ -164,7 +158,7 @@ class Deduper2:
         overwritten.
         Problem with this upsert us that md5s get overwritten every time.
         
-        Not used anymore.
+        Not used anymore. We keep it anyways for educational purposes.
         """
         cursor = self.con.cursor()
         print (f"upsert {file}")
