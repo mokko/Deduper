@@ -1,119 +1,248 @@
 """
-Recursively scan filesystem looking for duplicates.
+Recursively scan filesystem looking for duplicates, report duplicates.
+Offer a couple of ways of suggesting deletes and assist in deleting
+dupes.
 
-This script will start simple and grow from there as needed.
+Second iteration of the script using sqlite.
 
-First, we'll work with an in-memory file cache, later 
-we might add a database, depending on our own needs.
+Scan dir recursively for size. Determine md5 if size is not unique.
+If md5s are not unique, report that.
 
-First phase: SCAN. scan dir and save state to json file.
-Second phase: report duplicates. 
+This is a rewrite using sqlite for persistence and to save memory. It's
+quite obvious that I dont have much experience with sql. Also report to
+json for semi-automatic handling of deletes is being added.
 
-Identity test: files with same size and same md5
-
-Duplicates are files
-
-path, mtime, md5, size
-
-cache={
-    path: {
-        "mtme": mtime,
-        "md5": md5,
-        "size": size,
-    }
+I'm thinking of adding a json report format, something like
+{
+"hash1234566": 
+    {"keep":"/path/to/file"}
+    {"keep":"/path/to/file"}
 }
+
+Then i could programatically manipulate the report, e.g by default keep only
+he shorter version. I save the report to disk and can manipulate it manually.
+When done, I can delete the additional
+
+USAGE
+    deduper.py -c cache.db -s scan\dir # scans a new directory
+    deduper.py -c cache.db # writes report to cache.json
 """
+
 import argparse
-import json
 import hashlib
+import json
+import sqlite3
+from collections import defaultdict
 from pathlib import Path
-import pprint
+#import pprint
 
 class Deduper:
     # load cache if it exists
     # or start a new scan
-    def __init__(self, *, cache_fn):
-        self.cache = {}
-        self.cache_fn = cache_fn
-        if Path(self.cache_fn).exists():
-            print("*Loading existing cache")
-            with open(self.cache_fn) as f:
-                self.cache = json.load(f)
+    def __init__(self, *, db_fn):
+        self.db_fn = Path(db_fn).resolve()
+        self.init_db(self.db_fn)
+        #self.p = pprint.PrettyPrinter(indent=2)
 
-    def scan_dir(self, *, path):
+    def add_md5(self):
         """
-        Recursively scan dir and save all files with a size > 0 bytes to a cache.
-
+        In db, look for files with equal size and determine md5 for them.
         """
-        print(f"*Scan dir '{path}'")
-        files = {p.resolve() for p in Path(path).glob("**/*")}
-        for file in files:
-            size = file.stat().st_size
-            if size > 0 and not file.is_dir():
-                # print (f"{file} {size}")
-                self.cache[str(file)] = {"size": size, "mtime": file.stat().st_mtime}
+        print("*non unique file sizes")
+        cursor = self.con.cursor()
+        sizes = cursor.execute(
+            "SELECT size FROM Files GROUP BY size HAVING count(*) > 1"
+        ).fetchall()
+        #print(sizes)
+        
+        print("*filling in MD5")
+        # sizes with multiple files
+        for size in sizes: 
+            self.update_existing_md5s(size)
+            self.mk_missing_md5s (size) # only files without md5
 
-        with open(self.cache_fn, "w") as f:
-            json.dump(self.cache, f, sort_keys=True, indent=True)
-
-    def check_identity(self):
+    def check_md5(self):
         """
-        In cache, look for files with equal size and determine md5 for them.
+        Check for files with non-unique md5s and report'em to STDOUT.
+        
+        New version writes output to report.json.
         """
-        sizes = {}
-        for path in self.cache:
-            size = self.cache[path]["size"]
-            if size in sizes: 
-                sizes[size].append(path)
-            else:
-                sizes[size] = [path]     
 
-        for size in sorted(sizes):
-            if len(sizes[size]) > 1:
-                #print(f"{len(sizes[size])} {sizes[size]}")
-                for path in sizes[size]:
-                    item = self.cache[path]
-                    if item.get("md5") is None:
-                        item["md5"] = self.hash_file(path)
-                    #print (path)
-                    #print (item)
-        with open(self.cache_fn, "w") as f:
-            json.dump(self.cache, f, sort_keys=True, indent=True)
-
-        hashes = {}
-        for path in self.cache:
-            #print(path)
-            if self.cache[path].get("md5") is not None:
-                md5 = self.cache[path]["md5"]
-                if md5 in hashes: 
-                    hashes[md5].append(path)
-                else:
-                    hashes[md5] = [path]     
-
-        pp = pprint.PrettyPrinter(indent=2)
-        for md5 in sorted(hashes):
-            if len(hashes[md5]) > 1:
-                pp.pprint(hashes[md5])
-
+        print ("*Checking for records with non-unique hash")
+        
+        cursor = self.con.execute(
+            "SELECT md5 FROM Files GROUP BY md5 HAVING count(*) > 1"
+        )
+        result = defaultdict(dict)
+        for md5 in cursor.fetchall():
+            if md5[0] is not None:
+                cursor = self.con.execute(
+                    "SELECT path FROM Files " +
+                    "WHERE md5 = ?", (md5)
+                )
+                for path in cursor.fetchall():
+                    result[md5[0]][path[0]] = "keep"
+        self.write_report(result)
+        
     def hash_file(self, path):
-        with open(path, "rb") as f:
+        """Return md5 for path"""
+        
+        #print(f"*hash*{path[0]}")
+        with open(str(path), "rb") as f:
             file_hash = hashlib.md5()
             while chunk := f.read(8192):
                 file_hash.update(chunk)
-            #print(file_hash.digest())
             return file_hash.hexdigest()
+
+    def init_db(self,db_fn):
+        if db_fn.exists():
+            print("*Loading existing db")
+            self.con = sqlite3.connect(db_fn)
+        else:
+            print("*Making new db")
+            self.con = sqlite3.connect(db_fn)
+            self.con.execute("""
+            CREATE TABLE Files(
+                path TEXT PRIMARY KEY NOT NULL,
+                size  INT NOT NULL,
+                mtime INT NOT NULL,
+                md5 TEXT);""")
+    
+    def mk_missing_md5s(self, size):
+        """
+        Sor files of a given size that have no md5, create them. 
+        """
+        cursor = self.con.execute(
+            "SELECT path FROM Files WHERE size = ? AND md5 IS NULL", size
+        )
+        
+        for file in cursor.fetchall():
+            md5 = self.hash_file(file[0])
+            #print(f"!!!{file[0]}:{md5}")
+            cursor.execute(
+                "UPDATE Files SET md5 = ? WHERE path = ?",(md5, file[0]) 
+            )
+        self.con.commit()
+            
+    def scan_cache(self, *, scan_dir):
+        """
+        Check if file representations in db still exist on disk. Delete 
+        representations if file doesn't exist anymore.
+
+        We do this only for paths inside scan_dir.
+        """
+        scan_dir = str(Path(scan_dir).resolve())
+        expr = scan_dir+'%'
+        print(f"scancache: {scan_dir}")
+        cursor = self.con.execute(
+            "SELECT path FROM Files WHERE path LIKE ?", (expr,)
+        )
+        
+        for path in cursor.fetchall():
+            if not Path(path[0]).exists():
+                cursor = self.con.execute(
+                    "DELETE FROM Files WHERE path = ?", (path,)
+                )
+        self.con.commit()
+            # print(f"!cache: {path[0]}")
+        
+    def scan_dir(self, *, path):
+        """
+        Recursively scan dir files with a size > 0 bytes and save a list of 
+        file to db. 
+        """
+
+        print(f"*Scan dir '{path}'")
+        files = {p.resolve() for p in Path(path).glob("**/*")}
+        for file in files:
+            if file.stat().st_size > 0 and not file.is_dir():
+                self.upsert2(file)
+
+    def update_existing_md5s(self, size):
+        """
+        Check if files have changed since last run and update
+        md5s if necessary.
+        """
+        cursor = self.con.execute(
+            "SELECT path, mtime FROM Files WHERE md5 IS NOT NULL"
+        )
+
+        for (path, mtime) in cursor.fetchall():
+            print(path, mtime)
+            if mtime != Path(path).stat().st_mtime:
+                md5 = self.hash_file(path)
+                cursor.execute(
+                    "UPDATE Files SET md5 = ? WHERE path = ? AND size = ?",(md5, path, size) 
+                )                
+        self.con.commit()
+        
+    def upsert(self, file):
+        """
+        Not actually an upsert, but close enough. Existing md5s get 
+        overwritten.
+        Problem with this upsert us that md5s get overwritten every time.
+        
+        Not used anymore. We keep it anyways for educational purposes.
+        """
+        cursor = self.con.cursor()
+        print (f"upsert {file}")
+        cursor.execute(
+            "INSERT OR REPLACE INTO Files VALUES (?, ?, ?, NULL)",
+            (str(file), file.stat().st_size, file.stat().st_mtime)
+        )
+        self.con.commit()
+    
+    def upsert2(self, file):
+        """
+        If file representation doesn't exist yet in db, make it. Update 
+        existing file representation if file has changed. Keep existing 
+        md5 if file has stayed the same, otherwise discard it.
+        """
+        
+        print (f"upsert2 {str(file)}")
+        cursor = self.con.cursor()
+        mtime = cursor.execute(
+            "SELECT mtime FROM Files WHERE path = ?", (str(file),)
+        ).fetchone()
+        if mtime:
+            #print (f"file is represented in db already")
+            if file.stat().st_mtime != mtime[0]:
+                #print("Need to update representation")
+                cursor.execute(
+                    """UPDATE Files 
+                    SET size = ?, mtime = ?, md5 = NULL 
+                    WHERE path = ?""",
+                    (file.stat().st_size, file.stat().st_mtime, str(file)) 
+            )
+
+        else:
+            #print("Need to insert new representation")
+            cursor.execute(
+                "INSERT INTO Files VALUES (?,?,?, NULL)",
+                (str(file), file.stat().st_size, file.stat().st_mtime)
+            )
+        self.con.commit()
+
+    def write_report(self, report):
+        """ 
+        Writes report file (aka task file). Filename is derrived from
+        cache file.
+        """
+        task_fn = self.db_fn.with_suffix('.json')
+        print(f"*About to write report to {task_fn}")
+        with open(task_fn, "w") as f:
+            json.dump(report, f, sort_keys=True, indent=True)
 
 
 if __name__ == "__main__":
-    """
-    USAGE
-        deduper.py -c cache.json -s .
-    """
     parser = argparse.ArgumentParser(description="Simple file deduper")
     parser.add_argument("-c", "--cache", required=True, help="Location of cache file")
     parser.add_argument("-s", "--scan_dir", help="Directory to scan")
     args = parser.parse_args()
-    d = Deduper(cache_fn=args.cache)
+    d = Deduper(db_fn=args.cache)
     if args.scan_dir:
+        d.scan_cache(scan_dir=args.scan_dir)
         d.scan_dir(path=args.scan_dir)
-    d.check_identity()
+        d.add_md5()
+    d.check_md5() # at this point we report all dupes known to the db
+    d.con.close() # could be from multiple scan_dirs; that's up to user
