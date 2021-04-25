@@ -21,27 +21,28 @@ import json
 import shutil
 from pathlib import Path
 
-class Fox():
-    def __init__(self, *, task): 
+
+class Fox:
+    def __init__(self, *, task):
         self.task_fn = Path(task).resolve
         with open(task) as f:
             self.tasks = json.load(f)
 
-    def move(self, *, target): 
+    def move(self, *, target):
         print(f"*move {target}")
-        
+
         for group in self.tasks:
             for path in self.tasks[group]:
                 try:
                     shutil.move(path, target)
                 except shutil.Error as e:
                     print(e.args[0])
-                    
-    def rule(self, *, name): 
-        if name == "keep_shortest_path": 
+
+    def rule(self, *, name):
+        if name == "keep_shortest_path":
             self.keep_shortest_path()
         else:
-            raise TypeError ("Error: Unknown rule!")
+            raise TypeError("Error: Unknown rule!")
         self.write_json()
 
     def keep_shortest_path(self):
@@ -49,7 +50,7 @@ class Fox():
 
         for group in self.tasks:
             shortestPath = None
-            ln = 10000        
+            ln = 10000
             for path in self.tasks[group]:
                 if len(path) < ln:
                     shortestPath = path
@@ -57,7 +58,7 @@ class Fox():
             for path in self.tasks[group]:
                 if path != shortestPath:
                     self.tasks[group][path] = "rm"
-        
+
     def write_json(self):
         print(f"*saving json {self.task_fn}")
         with open(str(self.task_fn), "w") as f:
@@ -67,13 +68,16 @@ class Fox():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Deduper's clever companion")
     parser.add_argument("-t", "--task", required=True, help="Location of report file")
-    parser.add_argument("-m", "--move", help="Instead of deleting files move them to specified dir")
-    parser.add_argument("-r", "--rule", help="Specify rule to apply to dupes listed in report file")
+    parser.add_argument(
+        "-m", "--move", help="Instead of deleting files move them to specified dir"
+    )
+    parser.add_argument(
+        "-r", "--rule", help="Specify rule to apply to dupes listed in report file"
+    )
     args = parser.parse_args()
-    
+
     f = Fox(task=args.task)
     if args.rule is not None:
         f.rule(name=args.rule)
     else:
         f.move(target=args.move)
-        
