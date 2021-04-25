@@ -1,18 +1,16 @@
 """
 Deduper.py - Simple File Deduplication With The Power Of The Fox
 
-Deduper recursively scans directory looking for duplicates. It prepares 
-a report of duplicate files (aka "dupes"). The fox helps with picking
-which files should stay/be removed and carries out the (re)moving of the 
-dupes.
+Deduper recursively scans a directory looking for duplicates. It prepares 
+a report of duplicate files (aka "dupes"). The fox helps with picking which 
+files should stay/be removed and carries out the (re)moving of the dupes.
 
 Logarithm
 -Scan dir recursively for size. Determine md5 only if size is not unique.
 -Report cases where md5s are not unique.
 
 This is a rewrite using sqlite for persistence and to save memory. It's
-quite obvious that I dont have much experience with sql. Also report to
-json for semi-automatic handling of deletes is being added.
+quite obvious that I dont have much experience with sql. 
 
 USAGE
     deduper.py -c cache.db -s scan\dir # scans a new directory
@@ -25,13 +23,11 @@ import json
 import sqlite3
 from collections import defaultdict
 from pathlib import Path
-#import pprint
 
 class Deduper:
     def __init__(self, *, db_fn):
         self.db_fn = Path(db_fn).resolve()
         self.init_db(self.db_fn)
-        #self.p = pprint.PrettyPrinter(indent=2)
 
     def add_md5(self):
         """
@@ -61,7 +57,7 @@ class Deduper:
         cursor = self.con.execute(
             "SELECT md5 FROM Files GROUP BY md5 HAVING count(*) > 1"
         )
-        result = defaultdict(dict)
+        result = defaultdict(dict) # my first defalt dict
         for md5 in cursor.fetchall():
             if md5[0] is not None:
                 cursor = self.con.execute(
@@ -90,11 +86,11 @@ class Deduper:
             print("*Making new db")
             self.con = sqlite3.connect(db_fn)
             self.con.execute("""
-            CREATE TABLE Files(
-                path TEXT PRIMARY KEY NOT NULL,
-                size  INT NOT NULL,
-                mtime INT NOT NULL,
-                md5 TEXT);""")
+                CREATE TABLE Files(
+                    path TEXT PRIMARY KEY NOT NULL,
+                    size  INT NOT NULL,
+                    mtime INT NOT NULL,
+                    md5 TEXT);""") # could be CHAR
     
     def mk_missing_md5s(self, size):
         """
@@ -119,8 +115,7 @@ class Deduper:
 
         We do this only for paths inside scan_dir.
         """
-        scan_dir = str(Path(scan_dir).resolve())
-        expr = scan_dir+'%'
+        expr = str(Path(scan_dir).resolve())+'%'
         print(f"scancache: {scan_dir}")
         cursor = self.con.execute(
             "SELECT path FROM Files WHERE path LIKE ?", (expr,)
@@ -132,7 +127,7 @@ class Deduper:
                     "DELETE FROM Files WHERE path = ?", (path,)
                 )
         self.con.commit()
-            # print(f"!cache: {path[0]}")
+        # print(f"!cache: {path[0]}")
         
     def scan_dir(self, *, path):
         """
@@ -202,7 +197,6 @@ class Deduper:
                     WHERE path = ?""",
                     (file.stat().st_size, file.stat().st_mtime, str(file)) 
             )
-
         else:
             #print("Need to insert new representation")
             cursor.execute(
