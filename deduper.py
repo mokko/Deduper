@@ -1,31 +1,22 @@
 """
-Recursively scan filesystem looking for duplicates, report duplicates.
-Offer a couple of ways of suggesting deletes and assist in deleting
+Deduper.py - Simple File Deduplication With The Power Of The Fox
+
+Deduper recursively scans directory looking for duplicates. It prepares 
+a report of duplicate files (aka "dupes"). The fox helps with picking
+which files should stay/be removed and carries out the (re)moving of the 
 dupes.
 
-Second iteration of the script using sqlite.
-
-Scan dir recursively for size. Determine md5 if size is not unique.
-If md5s are not unique, report that.
+Logarithm
+-Scan dir recursively for size. Determine md5 only if size is not unique.
+-Report cases where md5s are not unique.
 
 This is a rewrite using sqlite for persistence and to save memory. It's
 quite obvious that I dont have much experience with sql. Also report to
 json for semi-automatic handling of deletes is being added.
 
-I'm thinking of adding a json report format, something like
-{
-"hash1234566": 
-    {"keep":"/path/to/file"}
-    {"keep":"/path/to/file"}
-}
-
-Then i could programatically manipulate the report, e.g by default keep only
-he shorter version. I save the report to disk and can manipulate it manually.
-When done, I can delete the additional
-
 USAGE
     deduper.py -c cache.db -s scan\dir # scans a new directory
-    deduper.py -c cache.db # writes report to cache.json
+    deduper.py -c cache.db             # writes report to cache.json
 """
 
 import argparse
@@ -37,8 +28,6 @@ from pathlib import Path
 #import pprint
 
 class Deduper:
-    # load cache if it exists
-    # or start a new scan
     def __init__(self, *, db_fn):
         self.db_fn = Path(db_fn).resolve()
         self.init_db(self.db_fn)
@@ -46,7 +35,7 @@ class Deduper:
 
     def add_md5(self):
         """
-        In db, look for files with equal size and determine md5 for them.
+        In the db, look for files with equal size and determine md5 for them.
         """
         print("*non unique file sizes")
         cursor = self.con.cursor()
@@ -63,9 +52,8 @@ class Deduper:
 
     def check_md5(self):
         """
-        Check for files with non-unique md5s and report'em to STDOUT.
-        
-        New version writes output to report.json.
+        Check for files with non-unique md5s and report'em to a json file,
+        the report or task file.
         """
 
         print ("*Checking for records with non-unique hash")
@@ -110,7 +98,7 @@ class Deduper:
     
     def mk_missing_md5s(self, size):
         """
-        Sor files of a given size that have no md5, create them. 
+        For files of a given size that have no md5, create md5s. 
         """
         cursor = self.con.execute(
             "SELECT path FROM Files WHERE size = ? AND md5 IS NULL", size
