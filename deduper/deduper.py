@@ -133,9 +133,11 @@ class Deduper:
 
         print(f"*Scan dir '{path}'")
         files = {p.resolve() for p in Path(path).glob("**/*")}
+        #exception when long file name in Windows (~260 char)
         for file in files:
-            if file.stat().st_size > 0 and not file.is_dir():
-                self.upsert2(file)
+            if len(str(file))< 250:
+                if file.stat().st_size > 0 and not file.is_dir():
+                    self.upsert2(file)
 
     def update_existing_md5s(self, size):
         """
