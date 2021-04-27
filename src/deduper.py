@@ -5,6 +5,9 @@ Deduper recursively scans a directory looking for duplicates. It prepares
 a report of duplicate files (aka "dupes"). The fox helps with picking which 
 files should stay/be removed and carries out the (re)moving of the dupes.
 
+Deduper's writes output to report.json. High-level errors are loggen in
+report.log in the same dir 
+
 Logarithm
 -Scan dir recursively for size. Determine md5 only if size is not unique.
 -Report cases where md5s are not unique.
@@ -19,6 +22,7 @@ USAGE
 
 import argparse
 import hashlib
+import logging
 import json
 import sqlite3
 from collections import defaultdict
@@ -29,6 +33,15 @@ class Deduper:
     def __init__(self, *, db_fn):
         self.db_fn = Path(db_fn).resolve()
         self.init_db(self.db_fn)
+
+        log_fn = self.db_fn.parent.joinpath(self.db_fn.stem+"-report.log")
+        logging.basicConfig(
+            datefmt="%Y%m%d %I:%M:%S %p",
+            filename=log_fn,
+            filemode="a",
+            level=logging.DEBUG,
+            format="%(asctime)s: %(message)s",
+        )
 
     def add_md5(self):
         """
@@ -138,7 +151,9 @@ class Deduper:
             if len(str(file))< 250:
                 if file.stat().st_size > 0 and not file.is_dir():
                     self.upsert2(file)
-
+            else:
+                logging.debug(f"Excluded because long path: {file}")
+                
     def update_existing_md5s(self, size):
         """
         Check if files have changed since last run and update
@@ -147,8 +162,8 @@ class Deduper:
         cursor = self.con.execute("SELECT path, mtime FROM Files WHERE md5 IS NOT NULL")
 
         for (path, mtime) in cursor.fetchall():
-            print(path, mtime)
             if mtime != Path(path).stat().st_mtime:
+                print(f"updating md5 {path}")
                 md5 = self.hash_file(path)
                 cursor.execute(
                     "UPDATE Files SET md5 = ? WHERE path = ? AND size = ?",

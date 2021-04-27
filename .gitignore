@@ -2,3 +2,4 @@
 *.json
 .project
 .pydevproject
+*.log
