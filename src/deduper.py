@@ -5,8 +5,8 @@ Deduper recursively scans a directory looking for duplicates. It prepares
 a report of duplicate files (aka "dupes"). The fox helps with picking which 
 files should stay/be removed and carries out the (re)moving of the dupes.
 
-Deduper's writes output to report.json. High-level errors are loggen in
-report.log in the same dir 
+Deduper's writes output to report.json. High-level errors are logged in
+report.log (in the same dir as report.json and cache.db).
 
 Logarithm
 -Scan dir recursively for size. Determine md5 only if size is not unique.
@@ -16,8 +16,9 @@ This is a rewrite using sqlite for persistence and to save memory. It's
 quite obvious that I dont have much experience with sql. 
 
 USAGE
-    deduper.py -c cache.db -s scan\dir # scans a new directory
+    deduper.py -c cache.db -s scan/dir # scans a new directory
     deduper.py -c cache.db             # writes report to cache.json
+                                       # logs to cache.log
 """
 
 import argparse
@@ -34,7 +35,7 @@ class Deduper:
         self.db_fn = Path(db_fn).resolve()
         self.init_db(self.db_fn)
 
-        log_fn = self.db_fn.parent.joinpath(self.db_fn.stem+"-report.log")
+        log_fn = self.db_fn.with_suffix(".log")
         logging.basicConfig(
             datefmt="%Y%m%d %I:%M:%S %p",
             filename=log_fn,
